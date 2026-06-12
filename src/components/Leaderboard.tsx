@@ -12,6 +12,7 @@ interface LeaderboardProps {
   referenceProfile: string;
   setReferenceProfile: (profile: string) => void;
   leaderboardData: LeaderboardEntry[];
+  onViewBracket: (profileName: string) => void;
 }
 
 export const Leaderboard: React.FC<LeaderboardProps> = ({
@@ -19,6 +20,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
   referenceProfile,
   setReferenceProfile,
   leaderboardData,
+  onViewBracket,
 }) => {
   return (
     <div className="glass-card thirds-container animate-slideup" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -144,9 +146,16 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
                     {isRef ? (
                       <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>Reference</span>
                     ) : (
-                      <span className="qualify-label yes" style={{ background: 'rgba(22, 163, 74, 0.15)', color: 'var(--accent-green)', borderColor: 'rgba(22, 163, 74, 0.3)' }}>
-                        Competing
-                      </span>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <button
+                          className="btn btn-secondary"
+                          style={{ padding: '6px 10px', fontSize: '0.75rem', height: '30px' }}
+                          onClick={() => onViewBracket(entry.profileName)}
+                          title={`View ${entry.profileName}'s predictions`}
+                        >
+                          👁️ View Bracket
+                        </button>
+                      </div>
                     )}
                   </td>
                 </tr>

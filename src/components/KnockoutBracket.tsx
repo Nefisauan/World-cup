@@ -12,6 +12,7 @@ interface KnockoutBracketProps {
     homePenalties?: number,
     awayPenalties?: number
   ) => void;
+  isReadOnly?: boolean;
 }
 
 type RoundTab = 'ALL' | 'R32' | 'R16' | 'QF' | 'SF' | 'FINALS';
@@ -19,6 +20,7 @@ type RoundTab = 'ALL' | 'R32' | 'R16' | 'QF' | 'SF' | 'FINALS';
 export const KnockoutBracket: React.FC<KnockoutBracketProps> = ({
   knockoutMatches,
   updateKnockoutScore,
+  isReadOnly = false,
 }) => {
   const [activeRoundTab, setActiveRoundTab] = useState<RoundTab>('ALL');
 
@@ -159,6 +161,7 @@ export const KnockoutBracket: React.FC<KnockoutBracketProps> = ({
                 value={penalties === undefined ? '' : penalties}
                 onChange={(e) => handlePenaltiesChange(match.id, side, e.target.value)}
                 placeholder="0"
+                disabled={isReadOnly}
               />
             </div>
           )}
@@ -168,7 +171,7 @@ export const KnockoutBracket: React.FC<KnockoutBracketProps> = ({
             className="score-input"
             value={score === undefined ? '' : score}
             onChange={(e) => handleScoreChange(match.id, side, e.target.value)}
-            disabled={isPlaceholder}
+            disabled={isPlaceholder || isReadOnly}
             placeholder="-"
           />
         </div>

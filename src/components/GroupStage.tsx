@@ -8,6 +8,7 @@ interface GroupStageProps {
   customStandingsOrder: { [groupId: string]: string[] };
   updateMatchScore: (matchId: string, homeScore: number | undefined, awayScore: number | undefined) => void;
   updateCustomStandingsOrder: (groupId: string, teamIds: string[]) => void;
+  isReadOnly?: boolean;
 }
 
 export const GroupStage: React.FC<GroupStageProps> = ({
@@ -15,6 +16,7 @@ export const GroupStage: React.FC<GroupStageProps> = ({
   customStandingsOrder,
   updateMatchScore,
   updateCustomStandingsOrder,
+  isReadOnly = false,
 }) => {
 
   const handleScoreChange = (
@@ -115,24 +117,26 @@ export const GroupStage: React.FC<GroupStageProps> = ({
                       <td>{standing.gf}</td>
                       <td className="cell-bold">{standing.points}</td>
                       <td>
-                        <div className="reorder-btns">
-                          <button
-                            className="reorder-btn"
-                            disabled={idx === 0}
-                            onClick={() => handleReorder(group.id, standings, idx, 'up')}
-                            title="Move Team Up"
-                          >
-                            ▲
-                          </button>
-                          <button
-                            className="reorder-btn"
-                            disabled={idx === 3}
-                            onClick={() => handleReorder(group.id, standings, idx, 'down')}
-                            title="Move Team Down"
-                          >
-                            ▼
-                          </button>
-                        </div>
+                        {!isReadOnly && (
+                          <div className="reorder-btns">
+                            <button
+                              className="reorder-btn"
+                              disabled={idx === 0}
+                              onClick={() => handleReorder(group.id, standings, idx, 'up')}
+                              title="Move Team Up"
+                            >
+                              ▲
+                            </button>
+                            <button
+                              className="reorder-btn"
+                              disabled={idx === 3}
+                              onClick={() => handleReorder(group.id, standings, idx, 'down')}
+                              title="Move Team Down"
+                            >
+                              ▼
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   );
@@ -166,6 +170,7 @@ export const GroupStage: React.FC<GroupStageProps> = ({
                             handleScoreChange(match.id, 'home', e.target.value)
                           }
                           placeholder="-"
+                          disabled={isReadOnly}
                         />
                         <span className="score-divider">:</span>
                         <input
@@ -178,6 +183,7 @@ export const GroupStage: React.FC<GroupStageProps> = ({
                             handleScoreChange(match.id, 'away', e.target.value)
                           }
                           placeholder="-"
+                          disabled={isReadOnly}
                         />
                       </div>
 

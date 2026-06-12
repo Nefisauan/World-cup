@@ -5,6 +5,7 @@ import ThirdPlacesTable from './components/ThirdPlacesTable';
 import KnockoutBracket from './components/KnockoutBracket';
 import Leaderboard from './components/Leaderboard';
 import type { LeaderboardEntry } from './components/Leaderboard';
+import CloudSettingsModal from './components/CloudSettingsModal';
 import { GROUPS_DATA, generateGroupMatches } from './data/teams';
 import type { Match } from './data/teams';
 import {
@@ -15,11 +16,27 @@ import {
   calculatePredictionPoints,
 } from './utils/tournamentLogic';
 import type { GroupStanding } from './utils/tournamentLogic';
+import { getSupabaseClient } from './utils/supabaseClient';
+import { isSupabaseConfigured } from './config';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'groups' | 'thirds' | 'bracket' | 'leaderboard'>('groups');
   
-  // Profile management states
+  // Database configuration state
+  const [isCloud, setIsCloud] = useState(() => isSupabaseConfigured());
+  const [showCloudSettings, setShowCloudSettings] = useState(false);
+
+  // Cloud auth states
+  const [cloudUser, setCloudUser] = useState<string | null>(() => localStorage.getItem('wc26_cloud_user'));
+  const [cloudUserPin, setCloudUserPin] = useState<string | null>(() => localStorage.getItem('wc26_cloud_pin'));
+  
+  // Cloud brackets list
+  const [cloudBrackets, setCloudBrackets] = useState<any[]>([]);
+
+  // Bracket viewer mode states
+  const [viewingUser, setViewingUser] = useState<string | null>(null);
+
+  // Local profile states (for local fallback mode)
   const [profiles, setProfiles] = useState<string[]>(() => {
     const saved = localStorage.getItem('wc26_profiles');
     return saved ? JSON.parse(saved) : ['Default'];
@@ -30,35 +47,30 @@ export const App: React.FC = () => {
     return saved && saved !== '' ? saved : 'Default';
   });
 
-  // Reference profile for leaderboard comparison
+  // Reference profile for leaderboard comparison (can be local or cloud username)
   const [referenceProfile, setReferenceProfile] = useState<string>(() => {
     const saved = localStorage.getItem('wc26_reference_profile');
     if (saved && saved !== '') return saved;
-    // Fallback: try to select a profile with 'Official' or 'Actual' in it, otherwise default to first
-    const savedProfilesList = localStorage.getItem('wc26_profiles');
-    if (savedProfilesList) {
-      const parsed: string[] = JSON.parse(savedProfilesList);
-      const official = parsed.find(p => p.toLowerCase().includes('official') || p.toLowerCase().includes('actual'));
-      if (official) return official;
-    }
     return 'Default';
   });
 
-  // Group Stage prediction state
+  // Predictions states (current active profile predictions)
   const [groupMatches, setGroupMatches] = useState<Match[]>(() => {
-    const initialProfile = localStorage.getItem('wc26_active_profile') || 'Default';
-    const saved = localStorage.getItem(`wc26_${initialProfile}_group_matches`);
+    const prefix = localStorage.getItem('wc26_cloud_user') 
+      ? `cloud_${localStorage.getItem('wc26_cloud_user')}`
+      : `local_${localStorage.getItem('wc26_active_profile') || 'Default'}`;
+    const saved = localStorage.getItem(`wc26_${prefix}_group_matches`);
     return saved ? JSON.parse(saved) : generateGroupMatches();
   });
 
-  // Custom standings ordering overrides
   const [customStandingsOrder, setCustomStandingsOrder] = useState<{ [groupId: string]: string[] }>(() => {
-    const initialProfile = localStorage.getItem('wc26_active_profile') || 'Default';
-    const saved = localStorage.getItem(`wc26_${initialProfile}_custom_standings`);
+    const prefix = localStorage.getItem('wc26_cloud_user') 
+      ? `cloud_${localStorage.getItem('wc26_cloud_user')}`
+      : `local_${localStorage.getItem('wc26_active_profile') || 'Default'}`;
+    const saved = localStorage.getItem(`wc26_${prefix}_custom_standings`);
     return saved ? JSON.parse(saved) : {};
   });
 
-  // Knockout match scores predictions
   const [knockoutScores, setKnockoutScores] = useState<{
     [matchId: string]: {
       homeScore?: number;
@@ -67,12 +79,14 @@ export const App: React.FC = () => {
       awayPenalties?: number;
     };
   }>(() => {
-    const initialProfile = localStorage.getItem('wc26_active_profile') || 'Default';
-    const saved = localStorage.getItem(`wc26_${initialProfile}_knockout_scores`);
+    const prefix = localStorage.getItem('wc26_cloud_user') 
+      ? `cloud_${localStorage.getItem('wc26_cloud_user')}`
+      : `local_${localStorage.getItem('wc26_active_profile') || 'Default'}`;
+    const saved = localStorage.getItem(`wc26_${prefix}_knockout_scores`);
     return saved ? JSON.parse(saved) : {};
   });
 
-  // Keep the profile names array in sync
+  // Keep local profiles list synced in localStorage
   useEffect(() => {
     localStorage.setItem('wc26_profiles', JSON.stringify(profiles));
   }, [profiles]);
@@ -82,24 +96,75 @@ export const App: React.FC = () => {
     localStorage.setItem('wc26_reference_profile', referenceProfile);
   }, [referenceProfile]);
 
-  // Profile Swapping Logic (synchronous to avoid state race conditions)
-  const handleSwitchProfile = (profileName: string) => {
+  // Fetch all brackets from Supabase on mount or when cloud changes
+  const fetchCloudBrackets = async () => {
+    const client = getSupabaseClient();
+    if (!client) return;
+
+    try {
+      const { data, error } = await client
+        .from('wc26_brackets')
+        .select('username, group_matches, custom_standings, knockout_scores, updated_at');
+      if (error) throw error;
+      if (data) {
+        setCloudBrackets(data);
+      }
+    } catch (e) {
+      console.error('Error fetching cloud brackets:', e);
+    }
+  };
+
+  useEffect(() => {
+    if (isCloud) {
+      fetchCloudBrackets();
+    }
+  }, [isCloud, cloudUser]);
+
+  // Save changes to database dynamically if user is logged in
+  const syncToCloud = async (
+    matches: Match[],
+    standings: any,
+    koScores: any
+  ) => {
+    if (!isCloud || !cloudUser || !cloudUserPin) return;
+    const client = getSupabaseClient();
+    if (!client) return;
+
+    try {
+      const { error } = await client
+        .from('wc26_brackets')
+        .upsert({
+          username: cloudUser,
+          passcode: cloudUserPin,
+          group_matches: matches,
+          custom_standings: standings,
+          knockout_scores: koScores,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'username' });
+      
+      if (error) throw error;
+    } catch (e) {
+      console.error('Error syncing predictions to cloud:', e);
+    }
+  };
+
+  // Local Profile Swapping
+  const handleSwitchLocalProfile = (profileName: string) => {
     setActiveProfile(profileName);
     localStorage.setItem('wc26_active_profile', profileName);
 
-    // Synchronously fetch and load keys associated with the target profile
-    const savedMatches = localStorage.getItem(`wc26_${profileName}_group_matches`);
+    const prefix = `local_${profileName}`;
+    const savedMatches = localStorage.getItem(`wc26_${prefix}_group_matches`);
     setGroupMatches(savedMatches ? JSON.parse(savedMatches) : generateGroupMatches());
 
-    const savedStandings = localStorage.getItem(`wc26_${profileName}_custom_standings`);
+    const savedStandings = localStorage.getItem(`wc26_${prefix}_custom_standings`);
     setCustomStandingsOrder(savedStandings ? JSON.parse(savedStandings) : {});
 
-    const savedKo = localStorage.getItem(`wc26_${profileName}_knockout_scores`);
+    const savedKo = localStorage.getItem(`wc26_${prefix}_knockout_scores`);
     setKnockoutScores(savedKo ? JSON.parse(savedKo) : {});
   };
 
-  // Profile Creation
-  const handleCreateProfile = (name: string) => {
+  const handleCreateLocalProfile = (name: string) => {
     const trimmed = name.trim();
     if (!trimmed) return;
     if (profiles.includes(trimmed)) {
@@ -108,37 +173,160 @@ export const App: React.FC = () => {
     }
     const nextProfiles = [...profiles, trimmed];
     setProfiles(nextProfiles);
-    handleSwitchProfile(trimmed);
+    handleSwitchLocalProfile(trimmed);
   };
 
-  // Profile Deletion
-  const handleDeleteProfile = (profileName: string) => {
+  const handleDeleteLocalProfile = (profileName: string) => {
     if (profiles.length <= 1) return;
     if (window.confirm(`Are you sure you want to delete profile "${profileName}"?`)) {
       const nextProfiles = profiles.filter((p) => p !== profileName);
       setProfiles(nextProfiles);
 
-      // Clear localStorage entries for this profile
-      localStorage.removeItem(`wc26_${profileName}_group_matches`);
-      localStorage.removeItem(`wc26_${profileName}_custom_standings`);
-      localStorage.removeItem(`wc26_${profileName}_knockout_scores`);
+      const prefix = `local_${profileName}`;
+      localStorage.removeItem(`wc26_${prefix}_group_matches`);
+      localStorage.removeItem(`wc26_${prefix}_custom_standings`);
+      localStorage.removeItem(`wc26_${prefix}_knockout_scores`);
 
-      // Fallback switch
       const fallback = nextProfiles[0];
-      handleSwitchProfile(fallback);
-      
-      // Update reference profile if the deleted one was selected
+      handleSwitchLocalProfile(fallback);
       if (referenceProfile === profileName) {
         setReferenceProfile(fallback);
       }
     }
   };
 
+  // Supabase Cloud Registration / Join Pool
+  const handleCloudRegister = async (username: string, pin: string): Promise<boolean> => {
+    const client = getSupabaseClient();
+    if (!client) {
+      alert('Database connection is not configured.');
+      return false;
+    }
+
+    try {
+      // Check if username is taken
+      const { data, error: selectError } = await client
+        .from('wc26_brackets')
+        .select('username')
+        .eq('username', username)
+        .maybeSingle();
+
+      if (selectError) throw selectError;
+      if (data) {
+        alert('Username is already taken. Please choose another one or click Log In.');
+        return false;
+      }
+
+      // Insert new profile
+      const { error: insertError } = await client
+        .from('wc26_brackets')
+        .insert({
+          username,
+          passcode: pin,
+          group_matches: groupMatches,
+          custom_standings: customStandingsOrder,
+          knockout_scores: knockoutScores
+        });
+
+      if (insertError) throw insertError;
+
+      setCloudUser(username);
+      setCloudUserPin(pin);
+      localStorage.setItem('wc26_cloud_user', username);
+      localStorage.setItem('wc26_cloud_pin', pin);
+      
+      // Save predictions locally with cloud prefix
+      const prefix = `cloud_${username}`;
+      localStorage.setItem(`wc26_${prefix}_group_matches`, JSON.stringify(groupMatches));
+      localStorage.setItem(`wc26_${prefix}_custom_standings`, JSON.stringify(customStandingsOrder));
+      localStorage.setItem(`wc26_${prefix}_knockout_scores`, JSON.stringify(knockoutScores));
+
+      alert(`Joined cloud pool successfully as "${username}"!`);
+      fetchCloudBrackets();
+      return true;
+    } catch (e) {
+      console.error(e);
+      alert('Error joining pool. Please make sure the SQL schema was run in your Supabase project.');
+      return false;
+    }
+  };
+
+  // Supabase Cloud Login
+  const handleCloudLogin = async (username: string, pin: string): Promise<boolean> => {
+    const client = getSupabaseClient();
+    if (!client) return false;
+
+    try {
+      const { data, error } = await client
+        .from('wc26_brackets')
+        .select('*')
+        .eq('username', username)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!data) {
+        alert('Username not found. Click Join Pool to register.');
+        return false;
+      }
+
+      if (data.passcode !== pin) {
+        alert('Incorrect PIN passcode! Please try again.');
+        return false;
+      }
+
+      // Successful login
+      setCloudUser(username);
+      setCloudUserPin(pin);
+      localStorage.setItem('wc26_cloud_user', username);
+      localStorage.setItem('wc26_cloud_pin', pin);
+
+      // Load their cloud predictions into active state
+      setGroupMatches(data.group_matches);
+      setCustomStandingsOrder(data.custom_standings || {});
+      setKnockoutScores(data.knockout_scores || {});
+
+      // Cache locally
+      const prefix = `cloud_${username}`;
+      localStorage.setItem(`wc26_${prefix}_group_matches`, JSON.stringify(data.group_matches));
+      localStorage.setItem(`wc26_${prefix}_custom_standings`, JSON.stringify(data.custom_standings || {}));
+      localStorage.setItem(`wc26_${prefix}_knockout_scores`, JSON.stringify(data.knockout_scores || {}));
+
+      alert(`Welcome back, ${username}! Predictions synced.`);
+      fetchCloudBrackets();
+      return true;
+    } catch (e) {
+      console.error(e);
+      alert('Login failed. Please verify credentials.');
+      return false;
+    }
+  };
+
+  // Sign out of Cloud Pool
+  const handleCloudSignOut = () => {
+    setCloudUser(null);
+    setCloudUserPin(null);
+    localStorage.removeItem('wc26_cloud_user');
+    localStorage.removeItem('wc26_cloud_pin');
+
+    // Switch back to Default local profile
+    handleSwitchLocalProfile('Default');
+  };
+
+  // Triggered when Cloud settings config is saved in modal
+  const handleConfigChanged = () => {
+    const configured = isSupabaseConfigured();
+    setIsCloud(configured);
+    if (!configured) {
+      handleCloudSignOut();
+    }
+  };
+
   // JSON Export Predictions
   const handleExportJSON = () => {
+    const filename = isCloud && cloudUser ? cloudUser : activeProfile;
     const dataToExport = {
       version: 'wc26-v1',
-      profileName: activeProfile,
+      profileName: filename,
       groupMatches,
       customStandingsOrder,
       knockoutScores,
@@ -148,7 +336,7 @@ export const App: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `wc2026_bracket_${activeProfile.replace(/\s+/g, '_')}.json`;
+    link.download = `wc2026_bracket_${filename.replace(/\s+/g, '_')}.json`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -159,7 +347,6 @@ export const App: React.FC = () => {
   const handleImportJSON = (jsonString: string) => {
     try {
       const parsed = JSON.parse(jsonString);
-      
       if (parsed.version !== 'wc26-v1' || !parsed.groupMatches) {
         alert('Invalid file format. Please upload a valid WC 2026 predictions file.');
         return;
@@ -169,53 +356,65 @@ export const App: React.FC = () => {
       setCustomStandingsOrder(parsed.customStandingsOrder || {});
       setKnockoutScores(parsed.knockoutScores || {});
 
-      // Save to localStorage immediately
-      localStorage.setItem(`wc26_${activeProfile}_group_matches`, JSON.stringify(parsed.groupMatches));
-      localStorage.setItem(`wc26_${activeProfile}_custom_standings`, JSON.stringify(parsed.customStandingsOrder || {}));
-      localStorage.setItem(`wc26_${activeProfile}_knockout_scores`, JSON.stringify(parsed.knockoutScores || {}));
+      // Save locally
+      const prefix = isCloud && cloudUser ? `cloud_${cloudUser}` : `local_${activeProfile}`;
+      localStorage.setItem(`wc26_${prefix}_group_matches`, JSON.stringify(parsed.groupMatches));
+      localStorage.setItem(`wc26_${prefix}_custom_standings`, JSON.stringify(parsed.customStandingsOrder || {}));
+      localStorage.setItem(`wc26_${prefix}_knockout_scores`, JSON.stringify(parsed.knockoutScores || {}));
 
-      alert('Predictions imported successfully into the current active profile!');
+      // If cloud user is logged in, sync to database immediately
+      if (isCloud && cloudUser && cloudUserPin) {
+        syncToCloud(parsed.groupMatches, parsed.customStandingsOrder || {}, parsed.knockoutScores || {});
+      }
+
+      alert('Predictions imported successfully!');
     } catch (e) {
       alert('Error parsing file. Please make sure it is a valid JSON file.');
     }
   };
 
-  // Derived Standings
-  const allGroupStandings: { [groupId: string]: GroupStanding[] } = {};
-  GROUPS_DATA.forEach((group) => {
-    const customOrder = customStandingsOrder[group.id];
-    allGroupStandings[group.id] = calculateGroupStandings(groupMatches, group.id, customOrder);
-  });
-
-  // Derived Third Places
-  const thirdPlaces = calculateThirdPlacesRankings(allGroupStandings);
-
-  // Derived Knockout Matches
-  const knockoutMatches = resolveKnockoutBracket(
-    allGroupStandings,
-    thirdPlaces,
-    knockoutScores
-  );
-
-  // Helper to load and resolve target profile data for leaderboard comparison
+  // Helper to load resolved matches data for any bracket profile (local or cloud)
   const getProfileResolvedData = (pName: string) => {
     let pMatches: Match[];
     let pCustomOrder: { [groupId: string]: string[] };
     let pKoScores: any;
 
-    if (pName === activeProfile) {
-      pMatches = groupMatches;
-      pCustomOrder = customStandingsOrder;
-      pKoScores = knockoutScores;
+    if (isCloud) {
+      // Look up in cloud brackets
+      const matched = cloudBrackets.find((b) => b.username === pName);
+      if (matched) {
+        pMatches = matched.group_matches;
+        pCustomOrder = matched.custom_standings || {};
+        pKoScores = matched.knockout_scores || {};
+      } else {
+        // Fallback to active state if matching active user
+        if (pName === cloudUser) {
+          pMatches = groupMatches;
+          pCustomOrder = customStandingsOrder;
+          pKoScores = knockoutScores;
+        } else {
+          pMatches = generateGroupMatches();
+          pCustomOrder = {};
+          pKoScores = {};
+        }
+      }
     } else {
-      const savedMatches = localStorage.getItem(`wc26_${pName}_group_matches`);
-      pMatches = savedMatches ? JSON.parse(savedMatches) : generateGroupMatches();
+      // Local Storage Mode
+      if (pName === activeProfile) {
+        pMatches = groupMatches;
+        pCustomOrder = customStandingsOrder;
+        pKoScores = knockoutScores;
+      } else {
+        const prefix = `local_${pName}`;
+        const savedMatches = localStorage.getItem(`wc26_${prefix}_group_matches`);
+        pMatches = savedMatches ? JSON.parse(savedMatches) : generateGroupMatches();
 
-      const savedStandings = localStorage.getItem(`wc26_${pName}_custom_standings`);
-      pCustomOrder = savedStandings ? JSON.parse(savedStandings) : {};
+        const savedStandings = localStorage.getItem(`wc26_${prefix}_custom_standings`);
+        pCustomOrder = savedStandings ? JSON.parse(savedStandings) : {};
 
-      const savedKo = localStorage.getItem(`wc26_${pName}_knockout_scores`);
-      pKoScores = savedKo ? JSON.parse(savedKo) : {};
+        const savedKo = localStorage.getItem(`wc26_${prefix}_knockout_scores`);
+        pKoScores = savedKo ? JSON.parse(savedKo) : {};
+      }
     }
 
     const standings: { [groupId: string]: GroupStanding[] } = {};
@@ -229,12 +428,37 @@ export const App: React.FC = () => {
     return {
       matches: pMatches,
       koMatches: koMatchesList,
+      customStandings: pCustomOrder,
+      knockoutScores: pKoScores
     };
   };
 
-  // Generate Leaderboard Rankings
+  // Peer Bracket Viewer Mode resolver
+  const activeViewData = viewingUser ? getProfileResolvedData(viewingUser) : null;
+
+  // Standings rendering values (either our active bracket or the viewed friend's bracket)
+  const activeMatchesToRender = activeViewData ? activeViewData.matches : groupMatches;
+  const activeStandingsToRender: { [groupId: string]: GroupStanding[] } = {};
+  
+  GROUPS_DATA.forEach((group) => {
+    const order = activeViewData 
+      ? activeViewData.customStandings[group.id] 
+      : customStandingsOrder[group.id];
+    activeStandingsToRender[group.id] = calculateGroupStandings(
+      activeMatchesToRender, 
+      group.id, 
+      order
+    );
+  });
+
+  const activeThirdsToRender = calculateThirdPlacesRankings(activeStandingsToRender);
+  const activeKoMatchesToRender = activeViewData 
+    ? activeViewData.koMatches 
+    : resolveKnockoutBracket(activeStandingsToRender, activeThirdsToRender, knockoutScores);
+
+  // Generate Leaderboard List (compares competitors to the reference profile)
   const refData = getProfileResolvedData(referenceProfile);
-  const leaderboardData: LeaderboardEntry[] = profiles.map((pName) => {
+  const leaderboardList: LeaderboardEntry[] = (isCloud ? cloudBrackets.map((b) => b.username) : profiles).map((pName) => {
     const pData = getProfileResolvedData(pName);
     const points = calculatePredictionPoints(
       pData.matches,
@@ -249,8 +473,8 @@ export const App: React.FC = () => {
     };
   });
 
-  // Sort Leaderboard: reference profile goes to bottom, competitors sorted by totalPoints desc
-  leaderboardData.sort((a, b) => {
+  // Sort: Reference profile stays at the bottom, others sorted by totalPoints desc
+  leaderboardList.sort((a, b) => {
     if (a.isReference && !b.isReference) return 1;
     if (!a.isReference && b.isReference) return -1;
     
@@ -263,19 +487,12 @@ export const App: React.FC = () => {
   // Calculate prediction progress percentage
   const getProgressPercent = (): number => {
     let completedCount = 0;
-
     groupMatches.forEach((m) => {
-      if (m.homeScore !== undefined && m.awayScore !== undefined) {
-        completedCount++;
-      }
+      if (m.homeScore !== undefined && m.awayScore !== undefined) completedCount++;
     });
-
     Object.values(knockoutScores).forEach((score) => {
-      if (score.homeScore !== undefined && score.awayScore !== undefined) {
-        completedCount++;
-      }
+      if (score.homeScore !== undefined && score.awayScore !== undefined) completedCount++;
     });
-
     return (completedCount / 104) * 100;
   };
 
@@ -289,7 +506,11 @@ export const App: React.FC = () => {
       m.id === matchId ? { ...m, homeScore, awayScore } : m
     );
     setGroupMatches(nextMatches);
-    localStorage.setItem(`wc26_${activeProfile}_group_matches`, JSON.stringify(nextMatches));
+
+    const prefix = isCloud && cloudUser ? `cloud_${cloudUser}` : `local_${activeProfile}`;
+    localStorage.setItem(`wc26_${prefix}_group_matches`, JSON.stringify(nextMatches));
+
+    syncToCloud(nextMatches, customStandingsOrder, knockoutScores);
   };
 
   // Update custom order of standings in a group (manual override)
@@ -299,7 +520,11 @@ export const App: React.FC = () => {
       [groupId]: teamIds,
     };
     setCustomStandingsOrder(nextStandingsOrder);
-    localStorage.setItem(`wc26_${activeProfile}_custom_standings`, JSON.stringify(nextStandingsOrder));
+
+    const prefix = isCloud && cloudUser ? `cloud_${cloudUser}` : `local_${activeProfile}`;
+    localStorage.setItem(`wc26_${prefix}_custom_standings`, JSON.stringify(nextStandingsOrder));
+
+    syncToCloud(groupMatches, nextStandingsOrder, knockoutScores);
   };
 
   // Update score of a knockout match
@@ -320,23 +545,32 @@ export const App: React.FC = () => {
       },
     };
     setKnockoutScores(nextScores);
-    localStorage.setItem(`wc26_${activeProfile}_knockout_scores`, JSON.stringify(nextScores));
+
+    const prefix = isCloud && cloudUser ? `cloud_${cloudUser}` : `local_${activeProfile}`;
+    localStorage.setItem(`wc26_${prefix}_knockout_scores`, JSON.stringify(nextScores));
+
+    syncToCloud(groupMatches, customStandingsOrder, nextScores);
   };
 
-  // Reset current profile's predictions
+  // Reset current predictions
   const handleReset = () => {
-    if (window.confirm(`Are you sure you want to clear predictions for profile "${activeProfile}"?`)) {
+    const userLabel = isCloud && cloudUser ? cloudUser : activeProfile;
+    if (window.confirm(`Clear all predictions for user "${userLabel}"?`)) {
       const defaultMatches = generateGroupMatches();
       setGroupMatches(defaultMatches);
       setCustomStandingsOrder({});
       setKnockoutScores({});
-      localStorage.removeItem(`wc26_${activeProfile}_group_matches`);
-      localStorage.removeItem(`wc26_${activeProfile}_custom_standings`);
-      localStorage.removeItem(`wc26_${activeProfile}_knockout_scores`);
+      
+      const prefix = isCloud && cloudUser ? `cloud_${cloudUser}` : `local_${activeProfile}`;
+      localStorage.removeItem(`wc26_${prefix}_group_matches`);
+      localStorage.removeItem(`wc26_${prefix}_custom_standings`);
+      localStorage.removeItem(`wc26_${prefix}_knockout_scores`);
+
+      syncToCloud(defaultMatches, {}, {});
     }
   };
 
-  // Simulate Random Scores sequentially for current profile
+  // Simulate Random Scores sequentially
   const handleRandomize = () => {
     const simulatedGroupMatches = generateGroupMatches().map((m) => {
       const homeScore = Math.floor(Math.random() * 4);
@@ -344,9 +578,11 @@ export const App: React.FC = () => {
       return { ...m, homeScore, awayScore };
     });
     setGroupMatches(simulatedGroupMatches);
-    setCustomStandingsOrder({}); // Clear overrides
-    localStorage.setItem(`wc26_${activeProfile}_group_matches`, JSON.stringify(simulatedGroupMatches));
-    localStorage.setItem(`wc26_${activeProfile}_custom_standings`, JSON.stringify({}));
+    setCustomStandingsOrder({});
+
+    const prefix = isCloud && cloudUser ? `cloud_${cloudUser}` : `local_${activeProfile}`;
+    localStorage.setItem(`wc26_${prefix}_group_matches`, JSON.stringify(simulatedGroupMatches));
+    localStorage.setItem(`wc26_${prefix}_custom_standings`, JSON.stringify({}));
 
     // Re-calculate standings for simulation
     const simulatedStandings: { [groupId: string]: GroupStanding[] } = {};
@@ -458,7 +694,9 @@ export const App: React.FC = () => {
     getSimulatedWinnerId('match-104', sfWinners['match-101'], sfWinners['match-102']);
 
     setKnockoutScores(simulatedScores);
-    localStorage.setItem(`wc26_${activeProfile}_knockout_scores`, JSON.stringify(simulatedScores));
+    localStorage.setItem(`wc26_${prefix}_knockout_scores`, JSON.stringify(simulatedScores));
+
+    syncToCloud(simulatedGroupMatches, {}, simulatedScores);
   };
 
   return (
@@ -471,43 +709,67 @@ export const App: React.FC = () => {
         progressPercent={getProgressPercent()}
         profiles={profiles}
         activeProfile={activeProfile}
-        onSwitchProfile={handleSwitchProfile}
-        onCreateProfile={handleCreateProfile}
-        onDeleteProfile={handleDeleteProfile}
+        onSwitchProfile={handleSwitchLocalProfile}
+        onCreateProfile={handleCreateLocalProfile}
+        onDeleteProfile={handleDeleteLocalProfile}
         onExport={handleExportJSON}
         onImport={handleImportJSON}
+        
+        // Cloud props
+        isCloud={isCloud}
+        cloudUser={cloudUser}
+        onCloudLogin={handleCloudLogin}
+        onCloudRegister={handleCloudRegister}
+        onCloudSignOut={handleCloudSignOut}
+        onOpenCloudSettings={() => setShowCloudSettings(true)}
+        viewingUser={viewingUser}
+        onExitViewMode={() => setViewingUser(null)}
       />
 
       <main style={{ flex: 1 }}>
         {activeTab === 'groups' && (
           <GroupStage
-            matches={groupMatches}
+            matches={activeMatchesToRender}
             customStandingsOrder={customStandingsOrder}
             updateMatchScore={updateMatchScore}
             updateCustomStandingsOrder={updateCustomStandingsOrder}
+            isReadOnly={!!viewingUser}
           />
         )}
 
         {activeTab === 'thirds' && (
-          <ThirdPlacesTable thirdPlaces={thirdPlaces} />
+          <ThirdPlacesTable thirdPlaces={activeThirdsToRender} />
         )}
 
         {activeTab === 'bracket' && (
           <KnockoutBracket
-            knockoutMatches={knockoutMatches}
+            knockoutMatches={activeKoMatchesToRender}
             updateKnockoutScore={updateKnockoutScore}
+            isReadOnly={!!viewingUser}
           />
         )}
 
         {activeTab === 'leaderboard' && (
           <Leaderboard
-            profiles={profiles}
+            profiles={isCloud ? cloudBrackets.map(b => b.username) : profiles}
             referenceProfile={referenceProfile}
             setReferenceProfile={setReferenceProfile}
-            leaderboardData={leaderboardData}
+            leaderboardData={leaderboardList}
+            onViewBracket={(username) => {
+              setViewingUser(username);
+              setActiveTab('groups'); // jump back to view their group predictions
+            }}
           />
         )}
       </main>
+
+      {/* Supabase Connection Setup Dialog */}
+      {showCloudSettings && (
+        <CloudSettingsModal
+          onClose={() => setShowCloudSettings(false)}
+          onConfigChanged={handleConfigChanged}
+        />
+      )}
     </div>
   );
 };
