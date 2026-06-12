@@ -15,10 +15,10 @@ export const getSupabaseConfig = (): SupabaseConfig => {
     };
   }
 
-  // 2. Fall back to Vite environment variables
+  // 2. Fall back to Vite environment variables or default project credentials
   return {
-    url: (import.meta.env.VITE_SUPABASE_URL as string || '').trim(),
-    anonKey: (import.meta.env.VITE_SUPABASE_ANON_KEY as string || '').trim(),
+    url: (import.meta.env.VITE_SUPABASE_URL as string || 'https://flayzzdmkyintojrdpxu.supabase.co').trim(),
+    anonKey: (import.meta.env.VITE_SUPABASE_ANON_KEY as string || 'sb_publishable_dBLSK8J6KJW8_BT6fL9WAw_Yag4X14K').trim(),
   };
 };
 
