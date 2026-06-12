@@ -120,6 +120,16 @@ export const App: React.FC = () => {
     }
   }, [isCloud, cloudUser]);
 
+  // Automatically select Official_Results as the reference profile in cloud mode if it exists
+  useEffect(() => {
+    if (isCloud && cloudBrackets.length > 0) {
+      const hasOfficial = cloudBrackets.some(b => b.username === 'Official_Results');
+      if (hasOfficial && referenceProfile !== 'Official_Results') {
+        setReferenceProfile('Official_Results');
+      }
+    }
+  }, [isCloud, cloudBrackets, referenceProfile]);
+
   // Save changes to database dynamically if user is logged in
   const syncToCloud = async (
     matches: Match[],
@@ -310,6 +320,56 @@ export const App: React.FC = () => {
 
     // Switch back to Default local profile
     handleSwitchLocalProfile('Default');
+  };
+
+  // Log in as Official_Results to edit official scores
+  const handleAdminAccess = async (pin: string) => {
+    if (pin !== '2026') {
+      alert('Incorrect Admin PIN!');
+      return;
+    }
+    const client = getSupabaseClient();
+    if (!client) {
+      alert('Database is not connected.');
+      return;
+    }
+
+    try {
+      // Check if Official_Results exists in the DB
+      const { data, error } = await client
+        .from('wc26_brackets')
+        .select('username')
+        .eq('username', 'Official_Results')
+        .maybeSingle();
+
+      if (error) throw error;
+
+      if (!data) {
+        // Create the Official_Results user if it doesn't exist yet
+        const { error: insertError } = await client
+          .from('wc26_brackets')
+          .insert({
+            username: 'Official_Results',
+            passcode: '2026',
+            group_matches: generateGroupMatches(),
+            custom_standings: {},
+            knockout_scores: {}
+          });
+
+        if (insertError) throw insertError;
+        alert('Created the "Official_Results" profile in the database! Logging you in now...');
+      }
+
+      // Switch profile/login to Official_Results
+      const success = await handleCloudLogin('Official_Results', '2026');
+      if (success) {
+        setReferenceProfile('Official_Results');
+      }
+      
+    } catch (e) {
+      console.error(e);
+      alert('Failed to access official results. Please try again.');
+    }
   };
 
   // Triggered when Cloud settings config is saved in modal
@@ -759,6 +819,7 @@ export const App: React.FC = () => {
               setViewingUser(username);
               setActiveTab('groups'); // jump back to view their group predictions
             }}
+            onAdminAccess={isCloud ? handleAdminAccess : undefined}
           />
         )}
       </main>

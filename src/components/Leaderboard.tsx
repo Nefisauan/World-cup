@@ -13,6 +13,7 @@ interface LeaderboardProps {
   setReferenceProfile: (profile: string) => void;
   leaderboardData: LeaderboardEntry[];
   onViewBracket: (profileName: string) => void;
+  onAdminAccess?: (pin: string) => void;
 }
 
 export const Leaderboard: React.FC<LeaderboardProps> = ({
@@ -21,6 +22,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
   setReferenceProfile,
   leaderboardData,
   onViewBracket,
+  onAdminAccess,
 }) => {
   return (
     <div className="glass-card thirds-container animate-slideup" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -34,29 +36,55 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
           </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: 'rgba(0,0,0,0.15)', padding: '10px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--accent-gold)', letterSpacing: '0.5px' }}>
-            🎯 REFERENCE RESULTS:
-          </span>
-          <select 
-            value={referenceProfile} 
-            onChange={(e) => setReferenceProfile(e.target.value)}
-            style={{
-              background: 'var(--bg-input)',
-              border: '1px solid var(--border-color)',
-              color: 'var(--text-main)',
-              padding: '6px 12px',
-              borderRadius: 'var(--radius-sm)',
-              fontWeight: 700,
-              fontSize: '0.85rem',
-              outline: 'none',
-              cursor: 'pointer'
-            }}
-          >
-            {profiles.map((p) => (
-              <option key={p} value={p}>{p === 'Default' ? 'Default (Predictions)' : p}</option>
-            ))}
-          </select>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: 'rgba(0,0,0,0.15)', padding: '10px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+            <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--accent-gold)', letterSpacing: '0.5px' }}>
+              🎯 REFERENCE RESULTS:
+            </span>
+            <select 
+              value={referenceProfile} 
+              onChange={(e) => setReferenceProfile(e.target.value)}
+              style={{
+                background: 'var(--bg-input)',
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-main)',
+                padding: '6px 12px',
+                borderRadius: 'var(--radius-sm)',
+                fontWeight: 700,
+                fontSize: '0.85rem',
+                outline: 'none',
+                cursor: 'pointer'
+              }}
+            >
+              {profiles.map((p) => (
+                <option key={p} value={p}>{p === 'Default' ? 'Default (Predictions)' : p}</option>
+              ))}
+            </select>
+          </div>
+
+          {onAdminAccess && (
+            <button 
+              onClick={() => {
+                const pin = prompt('Enter Admin PIN to update official tournament results:');
+                if (pin) onAdminAccess(pin);
+              }}
+              className="btn btn-secondary"
+              style={{ 
+                height: '38px', 
+                padding: '0 16px', 
+                fontSize: '0.8rem', 
+                fontWeight: 700, 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '6px',
+                background: 'rgba(234, 179, 8, 0.1)',
+                borderColor: 'var(--accent-gold)',
+                color: 'var(--accent-gold)'
+              }}
+            >
+              🏆 Update Official Results
+            </button>
+          )}
         </div>
       </div>
 

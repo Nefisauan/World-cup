@@ -41,9 +41,9 @@ export const GROUPS_DATA: Group[] = [
     name: 'Group B',
     teams: [
       { id: 'CAN', name: 'Canada', flag: '🇨🇦', group: 'B' },
-      { id: 'SUI', name: 'Switzerland', flag: '🇨🇭', group: 'B' },
-      { id: 'QAT', name: 'Qatar', flag: '🇶🇦', group: 'B' },
       { id: 'BIH', name: 'Bosnia and Herzegovina', flag: '🇧🇦', group: 'B' },
+      { id: 'QAT', name: 'Qatar', flag: '🇶🇦', group: 'B' },
+      { id: 'SUI', name: 'Switzerland', flag: '🇨🇭', group: 'B' },
     ],
   },
   {
@@ -82,8 +82,8 @@ export const GROUPS_DATA: Group[] = [
     teams: [
       { id: 'NED', name: 'Netherlands', flag: '🇳🇱', group: 'F' },
       { id: 'JPN', name: 'Japan', flag: '🇯🇵', group: 'F' },
-      { id: 'TUN', name: 'Tunisia', flag: '🇹🇳', group: 'F' },
       { id: 'SWE', name: 'Sweden', flag: '🇸🇪', group: 'F' },
+      { id: 'TUN', name: 'Tunisia', flag: '🇹🇳', group: 'F' },
     ],
   },
   {
@@ -131,9 +131,9 @@ export const GROUPS_DATA: Group[] = [
     name: 'Group K',
     teams: [
       { id: 'POR', name: 'Portugal', flag: '🇵🇹', group: 'K' },
+      { id: 'COD', name: 'Congo DR', flag: '🇨🇩', group: 'K' },
       { id: 'UZB', name: 'Uzbekistan', flag: '🇺🇿', group: 'K' },
       { id: 'COL', name: 'Colombia', flag: '🇨🇴', group: 'K' },
-      { id: 'COD', name: 'Congo DR', flag: '🇨🇩', group: 'K' },
     ],
   },
   {
