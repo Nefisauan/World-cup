@@ -3,6 +3,8 @@ import Header from './components/Header';
 import GroupStage from './components/GroupStage';
 import ThirdPlacesTable from './components/ThirdPlacesTable';
 import KnockoutBracket from './components/KnockoutBracket';
+import Leaderboard from './components/Leaderboard';
+import type { LeaderboardEntry } from './components/Leaderboard';
 import { GROUPS_DATA, generateGroupMatches } from './data/teams';
 import type { Match } from './data/teams';
 import {
@@ -10,11 +12,12 @@ import {
   calculateThirdPlacesRankings,
   resolveKnockoutBracket,
   resolveRoundOf32Matchups,
+  calculatePredictionPoints,
 } from './utils/tournamentLogic';
 import type { GroupStanding } from './utils/tournamentLogic';
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'groups' | 'thirds' | 'bracket'>('groups');
+  const [activeTab, setActiveTab] = useState<'groups' | 'thirds' | 'bracket' | 'leaderboard'>('groups');
   
   // Profile management states
   const [profiles, setProfiles] = useState<string[]>(() => {
@@ -25,6 +28,20 @@ export const App: React.FC = () => {
   const [activeProfile, setActiveProfile] = useState<string>(() => {
     const saved = localStorage.getItem('wc26_active_profile');
     return saved && saved !== '' ? saved : 'Default';
+  });
+
+  // Reference profile for leaderboard comparison
+  const [referenceProfile, setReferenceProfile] = useState<string>(() => {
+    const saved = localStorage.getItem('wc26_reference_profile');
+    if (saved && saved !== '') return saved;
+    // Fallback: try to select a profile with 'Official' or 'Actual' in it, otherwise default to first
+    const savedProfilesList = localStorage.getItem('wc26_profiles');
+    if (savedProfilesList) {
+      const parsed: string[] = JSON.parse(savedProfilesList);
+      const official = parsed.find(p => p.toLowerCase().includes('official') || p.toLowerCase().includes('actual'));
+      if (official) return official;
+    }
+    return 'Default';
   });
 
   // Group Stage prediction state
@@ -59,6 +76,11 @@ export const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('wc26_profiles', JSON.stringify(profiles));
   }, [profiles]);
+
+  // Sync reference profile state
+  useEffect(() => {
+    localStorage.setItem('wc26_reference_profile', referenceProfile);
+  }, [referenceProfile]);
 
   // Profile Swapping Logic (synchronous to avoid state race conditions)
   const handleSwitchProfile = (profileName: string) => {
@@ -102,7 +124,13 @@ export const App: React.FC = () => {
       localStorage.removeItem(`wc26_${profileName}_knockout_scores`);
 
       // Fallback switch
-      handleSwitchProfile(nextProfiles[0]);
+      const fallback = nextProfiles[0];
+      handleSwitchProfile(fallback);
+      
+      // Update reference profile if the deleted one was selected
+      if (referenceProfile === profileName) {
+        setReferenceProfile(fallback);
+      }
     }
   };
 
@@ -168,6 +196,69 @@ export const App: React.FC = () => {
     thirdPlaces,
     knockoutScores
   );
+
+  // Helper to load and resolve target profile data for leaderboard comparison
+  const getProfileResolvedData = (pName: string) => {
+    let pMatches: Match[];
+    let pCustomOrder: { [groupId: string]: string[] };
+    let pKoScores: any;
+
+    if (pName === activeProfile) {
+      pMatches = groupMatches;
+      pCustomOrder = customStandingsOrder;
+      pKoScores = knockoutScores;
+    } else {
+      const savedMatches = localStorage.getItem(`wc26_${pName}_group_matches`);
+      pMatches = savedMatches ? JSON.parse(savedMatches) : generateGroupMatches();
+
+      const savedStandings = localStorage.getItem(`wc26_${pName}_custom_standings`);
+      pCustomOrder = savedStandings ? JSON.parse(savedStandings) : {};
+
+      const savedKo = localStorage.getItem(`wc26_${pName}_knockout_scores`);
+      pKoScores = savedKo ? JSON.parse(savedKo) : {};
+    }
+
+    const standings: { [groupId: string]: GroupStanding[] } = {};
+    GROUPS_DATA.forEach((group) => {
+      standings[group.id] = calculateGroupStandings(pMatches, group.id, pCustomOrder[group.id]);
+    });
+
+    const thirdsList = calculateThirdPlacesRankings(standings);
+    const koMatchesList = resolveKnockoutBracket(standings, thirdsList, pKoScores);
+
+    return {
+      matches: pMatches,
+      koMatches: koMatchesList,
+    };
+  };
+
+  // Generate Leaderboard Rankings
+  const refData = getProfileResolvedData(referenceProfile);
+  const leaderboardData: LeaderboardEntry[] = profiles.map((pName) => {
+    const pData = getProfileResolvedData(pName);
+    const points = calculatePredictionPoints(
+      pData.matches,
+      pData.koMatches,
+      refData.matches,
+      refData.koMatches
+    );
+    return {
+      profileName: pName,
+      points,
+      isReference: pName === referenceProfile,
+    };
+  });
+
+  // Sort Leaderboard: reference profile goes to bottom, competitors sorted by totalPoints desc
+  leaderboardData.sort((a, b) => {
+    if (a.isReference && !b.isReference) return 1;
+    if (!a.isReference && b.isReference) return -1;
+    
+    if (b.points.totalPoints !== a.points.totalPoints) {
+      return b.points.totalPoints - a.points.totalPoints;
+    }
+    return a.profileName.localeCompare(b.profileName);
+  });
 
   // Calculate prediction progress percentage
   const getProgressPercent = (): number => {
@@ -253,7 +344,7 @@ export const App: React.FC = () => {
       return { ...m, homeScore, awayScore };
     });
     setGroupMatches(simulatedGroupMatches);
-    setCustomStandingsOrder({}); // Clear overrides so standings calculate naturally
+    setCustomStandingsOrder({}); // Clear overrides
     localStorage.setItem(`wc26_${activeProfile}_group_matches`, JSON.stringify(simulatedGroupMatches));
     localStorage.setItem(`wc26_${activeProfile}_custom_standings`, JSON.stringify({}));
 
@@ -405,6 +496,15 @@ export const App: React.FC = () => {
           <KnockoutBracket
             knockoutMatches={knockoutMatches}
             updateKnockoutScore={updateKnockoutScore}
+          />
+        )}
+
+        {activeTab === 'leaderboard' && (
+          <Leaderboard
+            profiles={profiles}
+            referenceProfile={referenceProfile}
+            setReferenceProfile={setReferenceProfile}
+            leaderboardData={leaderboardData}
           />
         )}
       </main>

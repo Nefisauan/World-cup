@@ -431,3 +431,137 @@ export const resolveKnockoutBracket = (
 
   return matches;
 };
+
+export interface PointsBreakdown {
+  groupScorePoints: number;
+  knockoutScorePoints: number;
+  progressionPoints: number;
+  totalPoints: number;
+}
+
+export const calculatePredictionPoints = (
+  predMatches: Match[],
+  predKoMatches: Match[],
+  refMatches: Match[],
+  refKoMatches: Match[]
+): PointsBreakdown => {
+  let groupScorePoints = 0;
+  let knockoutScorePoints = 0;
+  let progressionPoints = 0;
+
+  // 1. Group Stage Points
+  refMatches.forEach((refM) => {
+    if (refM.stage !== 'group') return;
+    const predM = predMatches.find((m) => m.id === refM.id);
+    if (!predM) return;
+
+    if (
+      refM.homeScore !== undefined &&
+      refM.awayScore !== undefined &&
+      predM.homeScore !== undefined &&
+      predM.awayScore !== undefined
+    ) {
+      const refExact = refM.homeScore === predM.homeScore && refM.awayScore === predM.awayScore;
+      if (refExact) {
+        groupScorePoints += 3;
+      } else {
+        const refOutcome = Math.sign(refM.homeScore - refM.awayScore);
+        const predOutcome = Math.sign(predM.homeScore - predM.awayScore);
+        if (refOutcome === predOutcome) {
+          groupScorePoints += 1;
+        }
+      }
+    }
+  });
+
+  // 2. Knockout Match Score Points
+  refKoMatches.forEach((refM) => {
+    const predM = predKoMatches.find((m) => m.id === refM.id);
+    if (!predM) return;
+
+    if (
+      refM.homeScore !== undefined &&
+      refM.awayScore !== undefined &&
+      predM.homeScore !== undefined &&
+      predM.awayScore !== undefined
+    ) {
+      const refExact = refM.homeScore === predM.homeScore && refM.awayScore === predM.awayScore;
+      if (refExact) {
+        knockoutScorePoints += 5;
+      } else {
+        const refOutcome = Math.sign(refM.homeScore - refM.awayScore);
+        const predOutcome = Math.sign(predM.homeScore - predM.awayScore);
+        if (refOutcome === predOutcome) {
+          knockoutScorePoints += 2;
+        }
+      }
+    }
+  });
+
+  // Helper to extract clean team IDs (ignoring placeholders)
+  const extractTeams = (matches: Match[], roundStages: string[]): Set<string> => {
+    const teams = new Set<string>();
+    matches.forEach((m) => {
+      if (roundStages.includes(m.stage)) {
+        if (m.homeTeam && !m.homeTeam.startsWith('Winner') && !m.homeTeam.startsWith('Loser') && !m.homeTeam.includes('/')) {
+          teams.add(m.homeTeam);
+        }
+        if (m.awayTeam && !m.awayTeam.startsWith('Winner') && !m.awayTeam.startsWith('Loser') && !m.awayTeam.includes('/')) {
+          teams.add(m.awayTeam);
+        }
+      }
+    });
+    return teams;
+  };
+
+  // Helper to get Champion ID from matches list
+  const getChampion = (matches: Match[]): string | null => {
+    const final = matches.find((m) => m.stage === 'final');
+    if (!final) return null;
+    return getMatchWinner(final);
+  };
+
+  // 3. Progression Points
+  // Round of 16 (matches 89-96)
+  const refR16 = extractTeams(refKoMatches, ['R16']);
+  const predR16 = extractTeams(predKoMatches, ['R16']);
+  predR16.forEach((t) => {
+    if (refR16.has(t)) progressionPoints += 2;
+  });
+
+  // Quarter-finals (matches 97-100)
+  const refQF = extractTeams(refKoMatches, ['QF']);
+  const predQF = extractTeams(predKoMatches, ['QF']);
+  predQF.forEach((t) => {
+    if (refQF.has(t)) progressionPoints += 4;
+  });
+
+  // Semi-finals (matches 101-102)
+  const refSF = extractTeams(refKoMatches, ['SF']);
+  const predSF = extractTeams(predKoMatches, ['SF']);
+  predSF.forEach((t) => {
+    if (refSF.has(t)) progressionPoints += 8;
+  });
+
+  // Finalists (match 104)
+  const refFinal = extractTeams(refKoMatches, ['final']);
+  const predFinal = extractTeams(predKoMatches, ['final']);
+  predFinal.forEach((t) => {
+    if (refFinal.has(t)) progressionPoints += 12;
+  });
+
+  // Champion
+  const refChamp = getChampion(refKoMatches);
+  const predChamp = getChampion(predKoMatches);
+  if (refChamp && predChamp && refChamp === predChamp && !refChamp.startsWith('Winner')) {
+    progressionPoints += 20;
+  }
+
+  return {
+    groupScorePoints,
+    knockoutScorePoints,
+    progressionPoints,
+    totalPoints: groupScorePoints + knockoutScorePoints + progressionPoints,
+  };
+};
+

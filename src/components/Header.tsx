@@ -1,8 +1,8 @@
 import React from 'react';
 
 interface HeaderProps {
-  activeTab: 'groups' | 'thirds' | 'bracket';
-  setActiveTab: (tab: 'groups' | 'thirds' | 'bracket') => void;
+  activeTab: 'groups' | 'thirds' | 'bracket' | 'leaderboard';
+  setActiveTab: (tab: 'groups' | 'thirds' | 'bracket' | 'leaderboard') => void;
   onReset: () => void;
   onRandomize: () => void;
   progressPercent: number;
@@ -158,6 +158,12 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={() => setActiveTab('bracket')}
           >
             Knockout Bracket
+          </button>
+          <button
+            className={`tab-btn ${activeTab === 'leaderboard' ? 'active' : ''}`}
+            onClick={() => setActiveTab('leaderboard')}
+          >
+            Leaderboard
           </button>
         </nav>
 
